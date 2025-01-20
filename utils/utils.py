@@ -28,7 +28,7 @@ def performance_stats(policies, rewards, matches):
     num_unique_policy = policies.sum(1).mean()
     variance = policies.sum(1).std()
 
-    policy_set = [p.cpu().numpy().astype(np.int).astype(np.str) for p in policies]
+    policy_set = [p.cpu().numpy().astype(int).astype(str) for p in policies]
     policy_set = set(["".join(p) for p in policy_set])
 
     return accuracy, reward, num_unique_policy, variance, policy_set
