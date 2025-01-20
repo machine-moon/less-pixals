@@ -49,13 +49,17 @@ def train(epoch):
     matches, losses = [], []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(trainloader), total=len(trainloader)):
 
-                inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+        inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
         if not args.parallel:
     	    inputs = inputs.cuda()
 
         inputs = torch.nn.functional.interpolate(inputs, (args.img_size, args.img_size))
 
-        preds = rnet.forward(inputs, args.model.split('_')[1], args.mode)
+        ## Unsure about this line
+        if args.mode == "lr":
+            preds = rnet.forward(inputs, args.model.split("_")[1], "lr-cl")
+        else:
+            preds = rnet.forward(inputs, args.model.split("_")[1], args.mode)
 
         _, pred_idx = preds.max(1)
         match = (pred_idx==targets).data
@@ -90,8 +94,12 @@ def test(epoch):
             inputs = inputs.cuda()
 
         inputs = torch.nn.functional.interpolate(inputs, (args.img_size, args.img_size))
-
-        preds = rnet.forward(inputs, args.model.split('_')[1], args.mode)
+        
+        ## Unsure about this line
+        if args.mode == "lr":
+            preds = rnet.forward(inputs, args.model.split("_")[1], "lr-cl")
+        else:
+            preds = rnet.forward(inputs, args.model.split("_")[1], args.mode)
 
         _, pred_idx = preds.max(1)
         match = (pred_idx==targets).data

@@ -54,7 +54,7 @@ def train(epoch):
     matches, rewards, rewards_baseline, policies = [], [], [], []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(trainloader), total=len(trainloader)):
 
-                inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+        inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
         if not args.parallel:
             inputs = inputs.cuda()
 
@@ -190,17 +190,23 @@ mappings, img_size, patch_size = utils.action_space_model(args.model.split('_')[
 # Load the Low-res classifier
 if args.ckpt_lr_cl is not None:
     checkpoint = torch.load(args.ckpt_lr_cl)
-    if args.model.split('_')[1] == 'C10' or args.model.split('_')[1] == 'C100':
-        utils.load_weights_to_flatresnet(checkpoint, rnet)
-    else:
-        rnet.load_state_dict(checkpoint['state_dict'])
+    #if args.model.split('_')[1] == 'C10' or args.model.split('_')[1] == 'C100':
+    #    utils.load_weights_to_flatresnet(checkpoint, rnet)
+    #else:
+    rnet_lr.load_state_dict(checkpoint['state_dict'])
     print('loaded the low resolution classifier')
 
 # Load the PN and HR classifier from the Finetune-1 Stage
 start_epoch = 0
+
+
+if args.ckpt_hr_cl is not None:
+    checkpoint = torch.load(args.ckpt_hr_cl)
+    rnet_hr.load_state_dict(checkpoint["state_dict"])
+    print("loaded the high resolution classifier")
+
 if args.load is not None:
     checkpoint = torch.load(args.load)
-    rnet_hr.load_state_dict(checkpoint['resnet_hr'])
     agent.load_state_dict(checkpoint['agent'])
     start_epoch = checkpoint['epoch'] + 1
     print('loaded agent from', args.load)

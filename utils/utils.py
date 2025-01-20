@@ -167,27 +167,30 @@ def get_dataset(model, root="data/"):
 
 
 def get_model(model):
-
-    from models import resnet
+    if "C10" in model or "C100" in model:
+        from models.resnet_cifar import ResNet, BasicBlock
+    else:
+        from models.resnet_in import ResNet, BasicBlock
 
     if model == "R32_C10":
-        rnet_hr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 3, 10)
-        rnet_lr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 3, 10)
-        agent = resnet.ResNet(resnet.BasicBlock, [1, 1, 1, 1], 3, 16)
+        rnet_hr = ResNet(BasicBlock, [3, 4, 6, 3], 3, 10)
+        rnet_lr = ResNet(BasicBlock, [3, 4, 6, 3], 3, 10)
+        agent = ResNet(BasicBlock, [1, 1, 1, 1], 3, 16)
 
     elif model == "R32_C100":
-        rnet_hr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 3, 100)
-        rnet_lr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 3, 100)
-        agent = resnet.ResNet(resnet.BasicBlock, [1, 1, 1, 1], 3, 16)
+        rnet_hr = ResNet(BasicBlock, [3, 4, 6, 3], 3, 100)
+        rnet_lr = ResNet(BasicBlock, [3, 4, 6, 3], 3, 100)
+        agent = ResNet(BasicBlock, [1, 1, 1, 1], 3, 16)
 
     elif model == "R50_ImgNet":
-        rnet_hr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 7, 1000)
-        rnet_lr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 7, 1000)
-        agent = resnet.ResNet(resnet.BasicBlock, [2, 2, 2, 2], 3, 16)
+        rnet_hr = ResNet(BasicBlock, [3, 4, 6, 3], 7, 1000)
+        rnet_lr = ResNet(BasicBlock, [3, 4, 6, 3], 7, 1000)
+        agent = ResNet(BasicBlock, [2, 2, 2, 2], 3, 16)
 
     elif model == "R34_fMoW":
-        rnet_hr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 7, 62)
-        rnet_lr = resnet.ResNet(resnet.BasicBlock, [3, 4, 6, 3], 7, 62)
-        agent = resnet.ResNet(resnet.BasicBlock, [2, 2, 2, 2], 3, 16)
+        rnet_hr = ResNet(BasicBlock, [3, 4, 6, 3], 7, 62)
+        rnet_lr = ResNet(BasicBlock, [3, 4, 6, 3], 7, 62)
+        agent = ResNet(BasicBlock, [2, 2, 2, 2], 3, 16)
 
     return rnet_hr, rnet_lr, agent
+

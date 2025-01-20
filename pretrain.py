@@ -54,7 +54,7 @@ def train(epoch):
     matches, rewards, rewards_baseline, policies = [], [], [], []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(trainloader), total=len(trainloader)):
 
-                inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
+        inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
         if not args.parallel:
             inputs = inputs.cuda()
         inputs_agent = inputs.clone()

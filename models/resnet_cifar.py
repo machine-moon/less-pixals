@@ -94,7 +94,9 @@ class ResNet(nn.Module):
         out = self.layer4(out)
         if res == "lr":
             out = F.avg_pool2d(out, 1)
-        else:
+        elif res == "lr-cl":  # lr classifier
+            out = F.avg_pool2d(out, 4)
+        else:  # hr
             out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
         out = self.linear(out)
