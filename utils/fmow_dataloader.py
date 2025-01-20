@@ -6,7 +6,8 @@ from torch.utils.data.dataset import Dataset
 from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None
-warnings.simplefilter('ignore', Image.DecompressionBombWarning)
+warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+
 
 class CustomDatasetFromImages(Dataset):
     def __init__(self, csv_path, transform):
