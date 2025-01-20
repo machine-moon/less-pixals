@@ -13,7 +13,6 @@ import os
 from tensorboard_logger import configure, log_value
 import torch
 import torch.autograd as autograd
-from torch.autograd import Variable
 import torch.utils.data as torchdata
 import torch.nn as nn
 import torch.nn.functional as F
@@ -55,7 +54,7 @@ def train(epoch):
     matches, rewards, rewards_baseline, policies = [], [], [], []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(trainloader), total=len(trainloader)):
 
-        inputs, targets = Variable(inputs), Variable(targets).cuda(async=True)
+                inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
         if not args.parallel:
             inputs = inputs.cuda()
         inputs_agent = inputs.clone()
@@ -91,7 +90,7 @@ def train(epoch):
 
         # Find the loss for only the policy network
         loss = -distr.log_prob(policy_sample)
-        loss = loss * Variable(advantage).expand_as(policy_sample)
+        loss = loss * advantage.expand_as(policy_sample)
         loss = loss.mean()
 
         optimizer.zero_grad()
@@ -121,7 +120,8 @@ def test(epoch):
     matches, rewards, policies = [], [], []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(testloader), total=len(testloader)):
 
-        inputs, targets = Variable(inputs, volatile=True), Variable(targets).cuda(async=True)
+        with torch.no_grad():
+            inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
         if not args.parallel:
             inputs = inputs.cuda()
 

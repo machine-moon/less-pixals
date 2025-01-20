@@ -11,7 +11,6 @@ import os
 from tensorboard_logger import configure, log_value
 import torch
 import torch.autograd as autograd
-from torch.autograd import Variable
 import torch.utils.data as torchdata
 import torch.nn as nn
 import torch.nn.functional as F
@@ -50,7 +49,7 @@ def train(epoch):
     matches, losses = [], []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(trainloader), total=len(trainloader)):
 
-        inputs, targets = Variable(inputs), Variable(targets).cuda(async=True)
+                inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
         if not args.parallel:
     	    inputs = inputs.cuda()
 
@@ -85,7 +84,8 @@ def test(epoch):
     matches = []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(testloader), total=len(testloader)):
 
-        inputs, targets = Variable(inputs, volatile=True), Variable(targets).cuda(async=True)
+        with torch.no_grad():
+            inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
         if not args.parallel:
             inputs = inputs.cuda()
 
