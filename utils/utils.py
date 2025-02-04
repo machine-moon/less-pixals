@@ -1,13 +1,16 @@
 import os
 import re
-import torch
-import torchvision.transforms as transforms
-import torchvision.datasets as torchdata
-import torchvision.models as torchmodels
 import numpy as np
 import shutil
 from random import randint, sample
-
+import jax
+import jax.numpy as jnp
+from flax import linen as nn
+import orbax
+from flax.training.common_utils import shard
+import torchvision.transforms as transforms
+import torchvision.datasets as torchdata
+import torchvision.models as torchmodels
 from utils.fmow_dataloader import CustomDatasetFromImages
 
 
@@ -18,40 +21,35 @@ def save_args(__file__, args):
 
 
 def performance_stats(policies, rewards, matches):
-    # Print the performace metrics including the average reward, average number
-    # and variance of sampled num_patches, and number of unique policies
-    policies = torch.cat(policies, 0)
-    rewards = torch.cat(rewards, 0)
-    accuracy = torch.cat(matches, 0).mean()
+    policies = jnp.concatenate(policies, axis=0)
+    rewards = jnp.concatenate(rewards, axis=0)
+    accuracy = jnp.mean(jnp.concatenate(matches, axis=0))
 
-    reward = rewards.mean()
-    num_unique_policy = policies.sum(1).mean()
-    variance = policies.sum(1).std()
+    reward = jnp.mean(rewards)
+    num_unique_policy = jnp.mean(jnp.sum(policies, axis=1))
+    variance = jnp.std(jnp.sum(policies, axis=1))
 
-    policy_set = [p.cpu().numpy().astype(int).astype(str) for p in policies]
+    policy_set = [p.astype(int).astype(str) for p in policies]
     policy_set = set(["".join(p) for p in policy_set])
 
     return accuracy, reward, num_unique_policy, variance, policy_set
 
 
 def compute_reward(preds, targets, policy, penalty):
-    # Reward function favors policies that drops patches only if the classifier
-    # successfully categorizes the image
-    patch_use = policy.sum(1).float() / policy.size(1)
+    patch_use = jnp.sum(policy, axis=1).astype(float) / policy.shape[1]
     sparse_reward = 1.0 - patch_use**2
 
-    _, pred_idx = preds.max(1)
-    match = (pred_idx == targets).data
+    pred_idx = jnp.argmax(preds, axis=1)
+    match = (pred_idx == targets).astype(float)
 
     reward = sparse_reward
-    reward[~match] = penalty
-    reward = reward.unsqueeze(1)
+    reward = jnp.where(match == 0, penalty, reward)
+    reward = reward[:, None]
 
-    return reward, match.float()
+    return reward, match
 
 
 def get_transforms(rnet, dset):
-
     if dset == "C10" or dset == "C100":
         mean = [x / 255.0 for x in [125.3, 123.0, 113.9]]
         std = [x / 255.0 for x in [63.0, 62.1, 66.7]]
@@ -71,7 +69,7 @@ def get_transforms(rnet, dset):
         std = [0.229, 0.224, 0.225]
         transform_train = transforms.Compose(
             [
-                transforms.Scale(256),
+                transforms.Resize(256),
                 transforms.RandomCrop(224),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
@@ -80,61 +78,48 @@ def get_transforms(rnet, dset):
         )
 
         transform_test = transforms.Compose(
-            [transforms.Scale(256), transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize(mean, std)]
+            [transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize(mean, std)]
         )
 
     elif dset == "fMoW":
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
         transform_train = transforms.Compose(
-            [transforms.Scale(224), transforms.RandomCrop(224), transforms.ToTensor(), transforms.Normalize(mean, std)]
+            [transforms.Resize(224), transforms.RandomCrop(224), transforms.ToTensor(), transforms.Normalize(mean, std)]
         )
         transform_test = transforms.Compose(
-            [transforms.Scale(224), transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize(mean, std)]
+            [transforms.Resize(224), transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize(mean, std)]
         )
 
     return transform_train, transform_test
 
 
 def agent_chosen_input(input_org, policy, mappings, patch_size):
-    """Generate masked images w.r.t policy learned by the agent."""
-    input_full = input_org.clone()
-    sampled_img = torch.zeros([input_org.shape[0], input_org.shape[1], input_org.shape[2], input_org.shape[3]])
+    input_full = input_org.copy()
+    sampled_img = jnp.zeros_like(input_org)
     for pl_ind in range(policy.shape[1]):
-        mask = (policy[:, pl_ind] == 1).cpu()
-        sampled_img[
+        mask = (policy[:, pl_ind] == 1)
+        sampled_img = sampled_img.at[
             :,
             :,
             mappings[pl_ind][0] : mappings[pl_ind][0] + patch_size,
             mappings[pl_ind][1] : mappings[pl_ind][1] + patch_size,
-        ] = input_full[
-            :,
-            :,
-            mappings[pl_ind][0] : mappings[pl_ind][0] + patch_size,
-            mappings[pl_ind][1] : mappings[pl_ind][1] + patch_size,
-        ]
-        sampled_img[
-            :,
-            :,
-            mappings[pl_ind][0] : mappings[pl_ind][0] + patch_size,
-            mappings[pl_ind][1] : mappings[pl_ind][1] + patch_size,
-        ] *= (
-            mask.unsqueeze(1).unsqueeze(1).unsqueeze(1).float()
+        ].set(
+            input_full[
+                :,
+                :,
+                mappings[pl_ind][0] : mappings[pl_ind][0] + patch_size,
+                mappings[pl_ind][1] : mappings[pl_ind][1] + patch_size,
+            ] * mask[:, None, None, None]
         )
-    input_org = sampled_img
-
-    return input_org.cuda()
+    return sampled_img
 
 
 def action_space_model(dset):
-    # Model the action space by dividing the image space into equal size patches
     if dset == "C10" or dset == "C100":
         img_size = 32
         patch_size = 8
-    elif dset == "fMoW":
-        img_size = 224
-        patch_size = 56
-    elif dset == "ImgNet":
+    elif dset == "fMoW" or dset == "ImgNet":
         img_size = 224
         patch_size = 56
 
@@ -146,7 +131,6 @@ def action_space_model(dset):
     return mappings, img_size, patch_size
 
 
-# Pick from the datasets available and the hundreds of models we have lying around depending on the requirements.
 def get_dataset(model, root="data/"):
     rnet, dset = model.split("_")
     transform_train, transform_test = get_transforms(rnet, dset)
@@ -193,4 +177,3 @@ def get_model(model):
         agent = ResNet(BasicBlock, [2, 2, 2, 2], 3, 16)
 
     return rnet_hr, rnet_lr, agent
-

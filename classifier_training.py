@@ -9,16 +9,13 @@ How to run on different benchmarks:
 """
 import os
 from tensorboard_logger import configure, log_value
-import torch
-import torch.autograd as autograd
-import torch.utils.data as torchdata
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
+import jax
+import jax.numpy as jnp
+import flax.linen as nn
+import flax.training.train_state as train_state
 import tqdm
-import torch.optim as optim
-import torch.backends.cudnn as cudnn
-cudnn.benchmark = True
+import optax
+import orbax.checkpoint
 
 from utils import utils
 
@@ -44,111 +41,71 @@ if not os.path.exists(args.cv_dir):
     os.system('mkdir ' + args.cv_dir)
 utils.save_args(__file__, args)
 
-def train(epoch):
-    rnet.train()
+def create_train_state(rng, model, learning_rate, weight_decay):
+    params = model.init(rng, jnp.ones([1, args.img_size, args.img_size, 3]))['params']
+    tx = optax.adamw(learning_rate, weight_decay=weight_decay)
+    return train_state.TrainState.create(apply_fn=model.apply, params=params, tx=tx)
+
+def train(state, trainloader, epoch):
+    def loss_fn(params, batch):
+        inputs, targets = batch
+        preds = state.apply_fn({'params': params}, inputs, args.model.split("_")[1], args.mode)
+        loss = optax.softmax_cross_entropy(preds, jax.nn.one_hot(targets, preds.shape[-1])).mean()
+        return loss, preds
+
     matches, losses = [], []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(trainloader), total=len(trainloader)):
+        inputs, targets = jnp.array(inputs), jnp.array(targets)
+        inputs = jax.image.resize(inputs, (inputs.shape[0], args.img_size, args.img_size, 3), method='bilinear')
 
-        inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
-        if not args.parallel:
-    	    inputs = inputs.cuda()
+        grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
+        (loss, preds), grads = grad_fn(state.params, (inputs, targets))
+        state = state.apply_gradients(grads=grads)
 
-        inputs = torch.nn.functional.interpolate(inputs, (args.img_size, args.img_size))
+        match = (jnp.argmax(preds, axis=1) == targets)
+        matches.append(match)
+        losses.append(loss)
 
-        ## Unsure about this line
-        if args.mode == "lr":
-            preds = rnet.forward(inputs, args.model.split("_")[1], "lr-cl")
-        else:
-            preds = rnet.forward(inputs, args.model.split("_")[1], args.mode)
+    accuracy = jnp.concatenate(matches).mean()
+    loss = jnp.stack(losses).mean()
 
-        _, pred_idx = preds.max(1)
-        match = (pred_idx==targets).data
- 
-        loss = F.cross_entropy(preds, targets)
- 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        matches.append(match.cpu())
-        losses.append(loss.cpu())
-
-    # Compute training indicators
-    accuracy = torch.cat(matches, 0).float().mean()
-    loss = torch.stack(losses).mean()
-
-    # Save the logs
-    log_str = 'E: %d | A: %.3f | L: %.3f'%(epoch, accuracy, loss)
+    log_str = 'E: %d | A: %.3f | L: %.3f' % (epoch, accuracy, loss)
     print(log_str)
     log_value('train_accuracy', accuracy, epoch)
     log_value('train_loss', loss, epoch)
+    return state
 
-def test(epoch):
-    rnet.eval()
+def test(state, testloader, epoch):
     matches = []
     for batch_idx, (inputs, targets) in tqdm.tqdm(enumerate(testloader), total=len(testloader)):
+        inputs, targets = jnp.array(inputs), jnp.array(targets)
+        inputs = jax.image.resize(inputs, (inputs.shape[0], args.img_size, args.img_size, 3), method='bilinear')
 
-        with torch.no_grad():
-            inputs, targets = inputs.cuda(non_blocking=True), targets.cuda(non_blocking=True)
-        if not args.parallel:
-            inputs = inputs.cuda()
+        preds = state.apply_fn({'params': state.params}, inputs, args.model.split("_")[1], args.mode)
+        match = (jnp.argmax(preds, axis=1) == targets)
+        matches.append(match)
 
-        inputs = torch.nn.functional.interpolate(inputs, (args.img_size, args.img_size))
-        
-        ## Unsure about this line
-        if args.mode == "lr":
-            preds = rnet.forward(inputs, args.model.split("_")[1], "lr-cl")
-        else:
-            preds = rnet.forward(inputs, args.model.split("_")[1], args.mode)
-
-        _, pred_idx = preds.max(1)
-        match = (pred_idx==targets).data
-
-        matches.append(match.cpu())
-
-    # Save the logs
-    accuracy = torch.cat(matches, 0).float().mean()
-    log_str = 'TS: %d | A: %.3f'%(epoch, accuracy)
+    accuracy = jnp.concatenate(matches).mean()
+    log_str = 'TS: %d | A: %.3f' % (epoch, accuracy)
     print(log_str)
-    log_value('train_accuracy', accuracy, epoch)
+    log_value('test_accuracy', accuracy, epoch)
 
-    # Save the model parameters
-    rnet_state_dict = rnet.module.state_dict() if args.parallel else rnet.state_dict()
-    state = {
-      'state_dict': rnet_state_dict,
-      'epoch': epoch,
-      'acc': accuracy
-    }
-    torch.save(state, args.cv_dir+'/ckpt_E_%d_A_%.3f'%(epoch, accuracy))
+    orbax.checkpoint.save_checkpoint(args.cv_dir, {'params': state.params}, step=epoch)
 
-#--------------------------------------------------------------------------------------------------------#
 trainset, testset = utils.get_dataset(args.model, args.data_dir)
-trainloader = torchdata.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=8)
-testloader = torchdata.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=8)
+trainloader = orbax.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=8)
+testloader = orbax.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=8)
 
-# Load the Model
 rnet, _, _ = utils.get_model(args.model)
-rnet.cuda()
+rng = jax.random.PRNGKey(0)
+state = create_train_state(rng, rnet, args.lr, args.wd)
 
-# Load the pre-trained classifier
 if args.load:
-    checkpoint = torch.load(args.load)
-    rnet.load_state_dict(checkpoint['state_dict'])
+    state = orbax.checkpoint.restore_checkpoint(args.load, state)
 
-# Save the configuration to the output directory
-configure(args.cv_dir+'/log', flush_secs=5)
+configure(args.cv_dir + '/log', flush_secs=5)
 
-# Define the optimizer
-if args.model.split('_')[1] == 'C10' or args.model.split('_')[1] == 'C100':
-    optimizer = optim.SGD(rnet.parameters(), lr=args.lr, momentum=0.9, weight_decay=args.wd)
-    lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [150, 250])
-else:
-    optimizer = optim.Adam(rnet.parameters(), lr=args.lr)
-    lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, [args.epoch_step])
-
-# Start training and testing
 for epoch in range(args.max_epochs):
-    train(epoch)
+    state = train(state, trainloader, epoch)
     if epoch % args.test_interval == 0:
-        test(epoch)
-    lr_scheduler.step()
+        test(state, testloader, epoch)

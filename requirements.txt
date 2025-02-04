@@ -1,5 +1,10 @@
-tqdm
-numpy
-tensorboard_logger
-argparse
-pandas
+flax==0.10.2
+jax==0.5.0
+numpy==2.2.2
+optax==0.2.4
+orbax==0.1.9
+pandas==2.2.3
+Pillow==11.1.0
+tensorboard_logger==0.1.0
+torchvision==0.21.0
+tqdm==4.67.1
