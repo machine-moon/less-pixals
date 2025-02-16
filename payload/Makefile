@@ -12,6 +12,13 @@ run:
 	--worker=all \
 	--command="source $(DEST_DIR)/$(RUNTIME_SECRETS) && python3 ${DEST_DIR}/${EXECUTABLE}"
 
+run_mnist:
+	@echo "[EXECUTING] Running MNIST on tpu-$(ACCELERATOR_TYPE)."
+	@gcloud compute tpus tpu-vm ssh ${TPU_NAME} \
+	--zone=${ZONE} \
+	--project=${PROJECT_ID} \
+	--worker=all \
+	--command="source $(DEST_DIR)/$(RUNTIME_SECRETS) && mkdir -p /tmp/mnist && cd $(DEST_DIR)/mnist && python3 main.py --workdir=/tmp/mnist --config=configs/default.py --config.learning_rate=0.05 --config.num_epochs=5 > /tmp/mnist/output.log 2>&1"
 
 kill:
 	@echo "[KILLING] Killing all TPU processes."
@@ -49,13 +56,15 @@ __delete:
 	--command='rm -rf ${DEST_DIR}'
 
 
-__install:
+install:
 	@echo "[INSTALLING] Installing dependencies on tpu-$(ACCELERATOR_TYPE)."
 	@gcloud compute tpus tpu-vm ssh ${TPU_NAME} \
 	--zone=${ZONE} \
 	--project=${PROJECT_ID} \
 	--worker=all \
-	--command='pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html &&'
+		--command='pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html && \
+		pip install --upgrade clu && \
+		pip install tensorflow optax orbax-checkpoint tensorflow_datasets "flax[all]"'
 
 ssh0:
 	@echo "[SSH] SSHing into worker 0."
